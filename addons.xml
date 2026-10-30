@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addons>
+<addon id="service.subtitles.ktuvit" name="Ktuvit.me" version="4.0.9" provider-name="CaTz, lioree">
+  <requires>
+    <import addon="xbmc.python" version="3.0.1"/>
+    <import addon="script.module.beautifulsoup4" version="4.8.2"/>
+  </requires>
+  <extension point="xbmc.subtitle.module" library="service.py"/>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Ktuvit.me</summary>
+    <description lang="en_GB">Search and Download subtitles from ktuvit.me.</description>
+    <source>https://github.com/XBMCil/service.subtitles.ktuvit</source>
+    <license>GPL-2.0-or-later</license>
+    <assets>
+        <icon>icon.png</icon>
+    </assets>
+  <news>v4.0.9 - by lioree [30.10.2026]
+- Fix subtitle download errors on Kodi 21 / Android
+- URL-encode release names and sanitize temp file names
+- Detect real subtitle format (ASS/SUB/VTT) and unpack zipped subtitles
+- Retry when the server answers 'request not found' instead of a file
+- Show 'No subtitles found' / 'Error downloading subtitle' notifications
+- Do not write the login request (password) to the debug log
+
+v4.0.0 - by CaTz [18.04.2023]
+- Add support for Kodi Nexus (v20) version</news></extension>
+</addon>
+<addon id="repository.lioree.ktuvit" name="Ktuvit (lioree) Repository" version="1.0.0" provider-name="lioree">
+  <extension point="xbmc.addon.repository" name="Ktuvit (lioree) Repository">
+    <dir>
+      <info compressed="false">https://lioree.github.io/service.subtitles.ktuvit/addons.xml</info>
+      <checksum>https://lioree.github.io/service.subtitles.ktuvit/addons.xml.md5</checksum>
+      <datadir zip="true">https://lioree.github.io/service.subtitles.ktuvit/</datadir>
+    </dir>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Repository for the Ktuvit.me subtitles addon</summary>
+    <description lang="en_GB">Installs and updates the Ktuvit.me subtitles addon (fork with Kodi 21 download fixes).</description>
+    <platform>all</platform>
+    <license>GPL-2.0-or-later</license>
+    <source>https://github.com/lioree/service.subtitles.ktuvit</source>
+    <assets>
+      <icon>icon.png</icon>
+    </assets>
+  </extension>
+</addon>
+</addons>
