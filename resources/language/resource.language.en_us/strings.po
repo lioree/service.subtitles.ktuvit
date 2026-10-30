@@ -41,3 +41,13 @@ msgstr ""
 msgctxt "#32007"
 msgid "Logged in successfully"
 msgstr ""
+
+
+msgctxt "#32008"
+msgid "Error downloading subtitle"
+msgstr ""
+
+
+msgctxt "#32009"
+msgid "No subtitles found"
+msgstr ""

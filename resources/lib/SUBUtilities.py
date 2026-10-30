@@ -4,6 +4,8 @@ import unicodedata
 import json
 import zlib
 import shutil
+import io
+import zipfile
 
 import xbmc
 import xbmcvfs
@@ -22,7 +24,12 @@ __profile__ = xbmcvfs.translatePath(__addon__.getAddonInfo("profile"))
 __temp__ = xbmcvfs.translatePath(os.path.join(__profile__, "temp", ""))
 __kodi_version__ = xbmc.getInfoLabel("System.BuildVersion").split(" ")[0]
 
-regexHelper = re.compile("\W+", re.UNICODE)
+regexHelper = re.compile(r"\W+", re.UNICODE)
+
+SUBTITLE_EXTS = (".srt", ".ass", ".ssa", ".sub", ".vtt", ".smi")
+
+# seconds to wait before each retry of a download the server refused
+RETRY_DELAYS = (2, 5, 8, 12)
 
 
 # ===============================================================================
@@ -112,8 +119,13 @@ class SubsHelper:
         self.urlHandler = URLHandler()
 
     def get_subtitle_list(self, item):
+        # Subtitle lists are only rendered for logged-in users, so refresh the session first
+        self.login()
+        self.notified = False
         search_results = self._search(item)
         results = self._build_subtitle_list(search_results, item)
+        if not results and not self.notified:
+            notify(32009)
 
         return results
 
@@ -145,17 +157,20 @@ class SubsHelper:
         elif item["year"]:
             query["Year"] = item["year"]
 
-        search_result = self.urlHandler.request(
-            self.BASE_URL + "/ContentProvider.svc/SearchPage_search",
-            data={"request": query},
-        )
+        search_url = self.BASE_URL + "/ContentProvider.svc/SearchPage_search"
+        search_result = self.urlHandler.request(search_url, data={"request": query})
 
         results = []
         log("Results: %s" % search_result)
 
-        if search_result is None or len(search_result["Films"]) == 0:
-            notify(32001)
-            return results  # return empty set
+        if not isinstance(search_result, dict):
+            self.notified = True
+            notify(32001)  # the request itself failed
+            return results
+        if not search_result.get("Films"):
+            self.notified = True
+            notify(32009)  # the site answered, it just has nothing for this title
+            return results
 
         ids = self._get_filtered_ids(search_result["Films"], search_string)
         log("Filtered Ids: %s" % ids)
@@ -183,24 +198,32 @@ class SubsHelper:
                 self.BASE_URL + "/GetModuleAjax.ashx", query_string=query_string
             )
 
-            sub_list = BeautifulSoup(raw_html, "html.parser")
-            sub_rows = sub_list.find_all("tr")
+            if not raw_html:
+                continue
+            sub_rows = BeautifulSoup(raw_html, "html.parser").find_all("tr")
+            subs += self._parse_rows(sub_rows, id, "input", "data-sub-id")
 
-            for row in sub_rows:
-                columns = row.find_all("td")
-                sub = {"id": id}
-                for index, column in enumerate(columns):
-                    if index == 0:
-                        sub["rls"] = column.get_text().strip().split("\n")[0]
-                    if index == 4:
-                        sub["downloads"] = int(column.get_text().strip())
-                    if index == 5:
-                        sub["sub_id"] = column.find(
-                            "input", attrs={"data-sub-id": True}
-                        )["data-sub-id"]
+        return subs
 
-                subs.append(sub)
-
+    # skip header/empty rows instead of crashing on them
+    def _parse_rows(self, rows, film_id, tag, attr):
+        subs = []
+        for row in rows:
+            columns = row.find_all("td")
+            if len(columns) < 6:
+                continue
+            el = columns[5].find(tag, attrs={attr: True})
+            if el is None:
+                continue
+            downloads = re.sub(r"\D", "", columns[4].get_text())
+            subs.append(
+                {
+                    "id": film_id,
+                    "rls": columns[0].get_text().strip().split("\n")[0],
+                    "downloads": int(downloads) if downloads else 0,
+                    "sub_id": el[attr],
+                }
+            )
         return subs
 
     def _search_movie(self, ids):
@@ -213,24 +236,12 @@ class SubsHelper:
             raw_html = self.urlHandler.request(
                 self.BASE_URL + "/../MovieInfo.aspx", query_string=query_string
             )
+            if not raw_html:
+                continue
             html = BeautifulSoup(raw_html, "html.parser")
             sub_rows = html.select("table#subtitlesList tbody > tr")
             log("html %s" % sub_rows)
-
-            for row in sub_rows:
-                columns = row.find_all("td")
-                sub = {"id": movie_id}
-                for index, column in enumerate(columns):
-                    if index == 0:
-                        sub["rls"] = column.get_text().strip().split("\n")[0]
-                    if index == 4:
-                        sub["downloads"] = int(column.get_text().strip())
-                    if index == 5:
-                        sub["sub_id"] = column.find(
-                            "a", attrs={"data-subtitle-id": True}
-                        )["data-subtitle-id"]
-
-                subs.append(sub)
+            subs += self._parse_rows(sub_rows, movie_id, "a", "data-subtitle-id")
 
         return subs
 
@@ -246,7 +257,10 @@ class SubsHelper:
 
             ret.append(
                 {
-                    "lang_index": item["3let_language"].index(lang3),
+                    # Hebrew may be missing from Kodi's subtitle languages setting
+                    "lang_index": item["3let_language"].index(lang3)
+                    if lang3 in item["3let_language"]
+                    else len(item["3let_language"]),
                     "filename": title,
                     "language_name": xbmc.convertLanguage(language, xbmc.ENGLISH_NAME),
                     "language_flag": language,
@@ -323,16 +337,105 @@ class SubsHelper:
             }
         }
 
-        response = self.urlHandler.request(
-            self.BASE_URL + "/ContentProvider.svc/RequestSubtitleDownload", data=query
-        )
-        f = self.urlHandler.request(
-            self.BASE_URL + "/DownloadFile.ashx",
-            query_string={"DownloadIdentifier": response["DownloadIdentifier"]},
-        )
-        with open(filename, "wb") as subFile:
-            subFile.write(f)
-        subFile.close()
+        url = self.BASE_URL + "/ContentProvider.svc/RequestSubtitleDownload"
+        content = ext = None
+        # the server sometimes answers with a "request not found, try again" text
+        # instead of the file - ask for a fresh download identifier and retry, waiting
+        # longer each time (retrying by hand a while later has worked)
+        for attempt in range(len(RETRY_DELAYS) + 1):
+            if attempt:
+                xbmc.sleep(RETRY_DELAYS[attempt - 1] * 1000)
+                if attempt == 2:
+                    # start a clean session: stale saved cookies may be what the
+                    # server is tripping over
+                    self.urlHandler.cookie_jar.clear()
+                    self.login()
+
+            response = self.urlHandler.request(url, data=query)
+            log("RequestSubtitleDownload: %s" % response)
+            if not isinstance(response, dict) or not response.get("DownloadIdentifier"):
+                continue
+
+            f = self.urlHandler.request(
+                self.BASE_URL + "/DownloadFile.ashx",
+                query_string={"DownloadIdentifier": response["DownloadIdentifier"]},
+            )
+            # an error comes back as parsed JSON (dict) or None instead of file bytes
+            if not isinstance(f, bytes) or not f:
+                log("No subtitle file for sub_id %s: %s" % (sub_id, f))
+                continue
+
+            headers = self.urlHandler.last_headers or {}
+            disposition = headers.get("content-disposition", "")
+            log(
+                "DownloadFile: type=%s disposition=%s size=%d head=%r"
+                % (headers.get("content-type"), disposition, len(f), f[:120])
+            )
+
+            # not every subtitle is an SRT - some are ASS/SUB/VTT or come zipped, and
+            # Kodi refuses to parse them if saved as .srt
+            content, ext = self._unpack_subtitle(f, disposition)
+            if content is not None:
+                break
+
+        if content is None:
+            notify(32008)
+            return None
+        f = content
+        filename = os.path.splitext(filename)[0] + ext
+
+        try:
+            with open(filename, "wb") as subFile:
+                subFile.write(f)
+        except OSError as e:
+            log("Failed to write %s: %s" % (filename, e))
+            notify(32008)
+            return None
+        return filename
+
+    def _unpack_subtitle(self, content, disposition):
+        if content[:2] == b"PK":
+            try:
+                archive = zipfile.ZipFile(io.BytesIO(content))
+            except zipfile.BadZipFile as e:
+                log("Bad zip from server: %s" % e)
+                return None, None
+            for name in archive.namelist():
+                ext = os.path.splitext(name)[1].lower()
+                if ext in SUBTITLE_EXTS:
+                    log("Extracted %s from zip" % name)
+                    return archive.read(name), ext
+            log("No subtitle inside zip: %s" % archive.namelist())
+            return None, None
+
+        # a short text with no timecodes or script header is a message from the server
+        # (e.g. "request not found, try again"), not a subtitle
+        if (
+            len(content) < 1000
+            and content[:2] not in (b"\xff\xfe", b"\xfe\xff")
+            and b"-->" not in content
+            and not re.match(rb"[\s\xef\xbb\xbf]*(\[Script Info\]|WEBVTT|\{\d)", content)
+        ):
+            log("Server returned a message instead of a subtitle: %r" % content[:200])
+            return None, None
+
+        match = re.search(r"filename\*?=[^;]*?(\.\w+)\"?\s*(;|$)", disposition)
+        if match and match.group(1).lower() in SUBTITLE_EXTS:
+            return content, match.group(1).lower()
+
+        # sniff the text itself, allowing for a UTF-16 BOM
+        if content[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = content[:4000].decode("utf-16", "ignore")
+        else:
+            text = content[:4000].decode("latin-1")
+        text = text.lstrip("﻿\xef\xbb\xbf \r\n")
+        if text.startswith("[Script Info]") or "\n[Events]" in text:
+            return content, ".ass"
+        if text.startswith("WEBVTT"):
+            return content, ".vtt"
+        if re.match(r"\{\d+\}\{\d+\}", text):
+            return content, ".sub"
+        return content, ".srt"
 
     def login(self, notify_success=False):
         email = __addon__.getSetting("email")
@@ -343,13 +446,13 @@ class SubsHelper:
             self.BASE_URL + "/MembershipService.svc/Login", data=post_data
         )
         log(response)
-        if response["IsSuccess"] is True:
+        if response and response.get("IsSuccess") is True:
             self.urlHandler.save_cookie()
             if notify_success:
                 notify(32007)
             return True
         else:
-            notify(32005)
+            notify(32006)
             return None
 
     def _get_filtered_ids(self, list, search_string):
@@ -379,7 +482,7 @@ class URLHandler:
         cookie_filename = os.path.join(__profile__, "cookiejar.txt")
         self.cookie_jar = LWPCookieJar(cookie_filename)
         if os.access(cookie_filename, os.F_OK):
-            self.cookie_jar.load()
+            self.cookie_jar.load(ignore_discard=True, ignore_expires=True)
 
         self.opener = build_opener(HTTPCookieProcessor(self.cookie_jar))
         self.opener.addheaders = [
@@ -406,12 +509,24 @@ class URLHandler:
             self.opener.addheaders += [("Cookie", cookie)]
 
         content = None
+        self.last_headers = None
         log("Getting url: %s" % (url))
-        if data is not None:
+        if data is not None and "MembershipService" not in url:
+            # the login body holds the account's (encrypted) password - keep it out of logs
             log("Post Data: %s" % (data))
         try:
             req = Request(url, data, headers={"Content-Type": "application/json"})
             response = self.opener.open(req)
+            self.last_headers = response.headers
+            if "RequestSubtitleDownload" in url or "DownloadFile" in url:
+                # names only, never values
+                log(
+                    "cookies sent/held: %s; set by server: %s"
+                    % (
+                        sorted(c.name for c in self.cookie_jar),
+                        [h.split("=")[0] for h in response.headers.get_all("Set-Cookie") or []],
+                    )
+                )
             content = None if response.code != 200 else response.read()
 
             if response.headers.get("content-encoding", "") == "gzip":
@@ -436,4 +551,5 @@ class URLHandler:
             if cookie.expires is not None:
                 cookie.expires += 2 * 12 * 30 * 24 * 60 * 60
 
-        self.cookie_jar.save()
+        # keep session cookies too - the auth cookie may not have an expiry
+        self.cookie_jar.save(ignore_discard=True, ignore_expires=True)

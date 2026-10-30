@@ -1,2 +1,5 @@
 /.watchmanconfig
 .idea/
+__pycache__/
+*.pyc
+*.zip

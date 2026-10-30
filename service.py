@@ -7,7 +7,9 @@ import xbmcgui
 import xbmcplugin
 import xbmcvfs
 
-from urllib.parse import unquote, parse_qsl
+import re
+
+from urllib.parse import unquote, parse_qsl, urlencode
 
 
 __addon__ = xbmcaddon.Addon()
@@ -24,7 +26,14 @@ __temp__ = xbmcvfs.translatePath(os.path.join(__profile__, "temp"))
 
 sys.path.append(__resource__)
 
-from SUBUtilities import SubsHelper, log, normalizeString, parse_rls_title, clean_title
+from SUBUtilities import (
+    SUBTITLE_EXTS,
+    SubsHelper,
+    log,
+    normalizeString,
+    parse_rls_title,
+    clean_title,
+)
 
 
 def search(item):
@@ -47,15 +56,18 @@ def search(item):
             else:
                 listitem.setProperty("hearing_imp", "false")
 
-            url = (
-                "plugin://%s/?action=download&id=%s&sub_id=%s&filename=%s&language=%s"
-                % (
-                    __scriptid__,
-                    it["id"],
-                    it["sub_id"],
-                    it["filename"],
-                    it["language_flag"],
-                )
+            # release names may contain "&", "#", "%" etc. - encode so the params survive
+            url = "plugin://%s/?%s" % (
+                __scriptid__,
+                urlencode(
+                    {
+                        "action": "download",
+                        "id": it["id"],
+                        "sub_id": it["sub_id"],
+                        "filename": it["filename"],
+                        "language": it["language_flag"],
+                    }
+                ),
             )
             xbmcplugin.addDirectoryItem(
                 handle=int(sys.argv[1]), url=url, listitem=listitem, isFolder=False
@@ -64,12 +76,16 @@ def search(item):
 
 def download(id, sub_id, filename, language):
     subtitle_list = []
-    exts = [".srt", ".sub"]
+    exts = SUBTITLE_EXTS
 
-    filename = os.path.join(__temp__, "%s.%s.srt" % (filename, language))
+    # Android's shared storage rejects : ? * " < > | \ and a "/" would point to a
+    # missing folder; also stay well under the 255-byte name limit (Hebrew = 2 bytes/char)
+    filename = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", filename).strip(" ._")[:80]
+    filename = os.path.join(__temp__, "%s.%s.srt" % (filename or "ktuvit", language))
 
     helper = SubsHelper()
-    helper.download(id, sub_id, filename)
+    if not helper.download(id, sub_id, filename):
+        return subtitle_list
 
     for file in xbmcvfs.listdir(__temp__)[1]:
         full_path = os.path.join(__temp__, file)
@@ -107,7 +123,8 @@ def title_from_focused_item(item_data):
     return title
 
 
-params = dict(parse_qsl(sys.argv[2][1:]))
+# plugin calls pass "?action=...", RunScript (settings button) passes "action=..."
+params = dict(parse_qsl(sys.argv[2].lstrip("?"))) if len(sys.argv) > 2 else {}
 
 
 def collect_initial_data():
@@ -153,7 +170,7 @@ def collect_initial_data():
     return item_data
 
 
-if params["action"] in ["search", "manualsearch"]:
+if params.get("action") in ["search", "manualsearch"]:
     log("Version: '%s'" % (__version__,))
     log("Action '%s' called" % (params["action"]))
 
@@ -195,7 +212,7 @@ if params["action"] in ["search", "manualsearch"]:
     search(item)
 
 
-elif params["action"] == "download":
+elif params.get("action") == "download":
     ## we pickup all our arguments sent from def search()
     subs = download(
         params["id"], params["sub_id"], params["filename"], params["language"]
@@ -207,9 +224,10 @@ elif params["action"] == "download":
             handle=int(sys.argv[1]), url=sub, listitem=listitem, isFolder=False
         )
 
-elif params["action"] == "login":
+elif params.get("action") == "login":
     helper = SubsHelper()
     helper.login(True)
     __addon__.openSettings()
 
-xbmcplugin.endOfDirectory(int(sys.argv[1]))  ## send end of directory to XBMC
+if params.get("action") != "login":
+    xbmcplugin.endOfDirectory(int(sys.argv[1]))  ## send end of directory to XBMC

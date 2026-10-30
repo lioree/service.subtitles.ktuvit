@@ -41,3 +41,12 @@ msgstr "האימייל או הסיסמא אינם נכונים"
 msgctxt "#32007"
 msgid "Logged in successfully"
 msgstr "ההתחברות עברה בהצלחה"
+
+msgctxt "#32008"
+msgid "Error downloading subtitle"
+msgstr "שגיאה בהורדת הכתובית"
+
+
+msgctxt "#32009"
+msgid "No subtitles found"
+msgstr "לא נמצאו כתוביות"
