@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addons>
-<addon id="service.subtitles.ktuvit" name="Ktuvit.me" version="4.0.9" provider-name="CaTz, lioree">
+<addon id="service.subtitles.ktuvit" name="Ktuvit.me" version="4.0.10" provider-name="CaTz, lioree">
   <requires>
     <import addon="xbmc.python" version="3.0.1"/>
     <import addon="script.module.beautifulsoup4" version="4.8.2"/>
@@ -14,7 +14,10 @@
     <assets>
         <icon>icon.png</icon>
     </assets>
-  <news>v4.0.9 - by lioree [30.10.2026]
+  <news>v4.0.10 - by lioree [30.10.2026]
+- Version bump so installs of the earlier 4.0.9 update and stop logging the login request (password)
+
+v4.0.9 - by lioree [30.10.2026]
 - Fix subtitle download errors on Kodi 21 / Android
 - URL-encode release names and sanitize temp file names
 - Detect real subtitle format (ASS/SUB/VTT) and unpack zipped subtitles
