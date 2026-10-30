@@ -1,3 +1,7 @@
+## v4.0.10
+> 30.10.2026 - by lioree
+- Version bump so installs of the earlier 4.0.9 update and stop logging the login request (password)
+
 ## v4.0.9
 > 30.10.2026 - by lioree
 - Fix subtitle download errors on Kodi 21 / Android

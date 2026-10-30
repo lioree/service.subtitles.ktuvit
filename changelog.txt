@@ -1,3 +1,6 @@
+4.0.10 - by lioree (30/10/2026)
+- Version bump so installs of the earlier 4.0.9 update and stop logging the login request (password)
+
 4.0.9 - by lioree (30/10/2026)
 - Fix subtitle download errors on Kodi 21 / Android
 - URL-encode release names and sanitize temp file names
