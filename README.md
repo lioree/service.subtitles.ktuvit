@@ -3,6 +3,16 @@ service.subtitles.ktuvit
 
 Ktuvit.me subtitle service for Kodi
 
+## Install (this fork, with automatic updates)
+
+1. In Kodi: Settings > File manager > Add source > `https://lioree.github.io/service.subtitles.ktuvit/` (name it e.g. `ktuvit`).
+2. Add-ons > Install from zip file > `ktuvit` > `repository.lioree.ktuvit.zip` (enable *Unknown sources* if asked).
+3. Add-ons > Install from repository > *Ktuvit (lioree) Repository* > Subtitles > *Ktuvit.me* > Install.
+
+Kodi then offers new versions by itself. The repository files are built by `tools/build_repo.py` and published on the `gh-pages` branch.
+
+## Encrypted password
+
 In order to get the encoded password:
 
 1. Open [ktuvit.me](https://www.ktuvit.me) in the browser
